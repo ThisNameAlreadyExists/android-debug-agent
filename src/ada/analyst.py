@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 from .logcapture import LogBundle, LogLine
+from .llm import LLMError, OllamaClient, scrub
 
 
 @dataclass
@@ -180,25 +181,57 @@ def _rule_anr(lines: list[LogLine], idx: int) -> Diagnosis:
 
 
 class LogAnalyst:
-    """规则层诊断。输入 LogBundle，输出 Diagnosis 列表（按崩溃/ANR 逐条）。"""
+    """三级漏斗：规则层（本类内置）→ LLM 层（可选注入）。指纹由 CrashDB 层处理。"""
 
-    def analyze(self, bundle: LogBundle, package: str = "") -> list[Diagnosis]:
+    def __init__(self, llm: Optional[OllamaClient] = None):
+        self.llm = llm
+
+    def analyze(self, bundle: LogBundle, package: str = "",
+                use_llm: bool = True,
+                context: str = "") -> list[Diagnosis]:
         lines = bundle.lines
         out: list[Diagnosis] = []
         for idx in bundle.crash_indices:
-            # crash_indices 记录的是全局行号，换算到 lines 切片内
-            local = max(0, idx - 0)
-            if local >= len(lines):
-                local = len(lines) - 1
+            local = min(max(0, idx), len(lines) - 1)
             crash = parse_crash(lines, local)
             if not crash:
                 continue
             diag = self._match(crash, package)
+            if diag.category == "unknown" and use_llm and self.llm:
+                diag = self._llm_diagnose(crash, package, diag, context)
             out.append(diag)
         for idx in bundle.anr_indices:
             local = min(idx, len(lines) - 1)
             out.append(_rule_anr(lines, local))
         return out
+
+    def _llm_diagnose(self, crash: CrashInfo, package: str,
+                      fallback: Diagnosis, context: str = "") -> Diagnosis:
+        """LLM 层：规则未命中时泛化推断。输入先脱敏；失败降级回规则结论。"""
+        prompt = (
+            "分析以下安卓崩溃日志，输出严格的 JSON（不要输出其他任何内容）：\n"
+            '{"root_cause": "根因一句话", "category": "英文小写分类", '
+            '"suggested_fix": "修复建议", "confidence": 0.0到1.0}\n\n'
+            f"应用包名：{package}\n{f'场景上下文：{context}' if context else ''}\n"
+            f"崩溃日志：\n{scrub(crash.raw)}")
+        try:
+            import json as _json
+            text = self.llm.chat(prompt)  # type: ignore
+            m = re.search(r"\{.*\}", text, re.S)
+            data = _json.loads(m.group(0)) if m else {}
+            if not data.get("root_cause"):
+                raise ValueError("LLM 输出缺 root_cause")
+            return Diagnosis(
+                category=str(data.get("category", "unknown")),
+                root_cause=str(data["root_cause"]),
+                evidence=[crash.raw[:800]],
+                confidence=min(max(float(data.get("confidence", 0.5)), 0.0), 1.0),
+                fingerprint=fingerprint(crash, package),
+                suggested_fix=str(data.get("suggested_fix", "")),
+                llm_used=True,
+            )
+        except (LLMError, ValueError, KeyError):
+            return fallback
 
     def _match(self, crash: CrashInfo, package: str) -> Diagnosis:
         text = crash.exception + " " + crash.message

@@ -21,6 +21,17 @@ LLM 驱动的安卓真机调试 / 自动化测试 / 日志诊断智能体。
 | 规则诊断 | 崩溃栈解析（帧→源码行）、模式库（NPE/OOM/ANR/权限/IllegalState/native）、崩溃指纹（跨版本稳定） |
 | 报告 | Markdown：环境信息 + 执行过程表 + 诊断结论（含证据与指纹） |
 
+## 二期已实现（V0.2.0）
+
+| 模块 | 能力 |
+|---|---|
+| CrashDB 指纹库 | SQLite 持久化；历史命中秒回；已修复指纹重现自动回归告警；跨设备/版本聚合统计（`ada crashes history/show/fixed`） |
+| LLM 诊断层 | 规则未命中时走本地 Ollama；外发前正则脱敏（手机号/身份证/token/IP/邮箱）；LLM 故障自动降级回规则结论 |
+| 探索模式 | `ada explore "目标"`：UI 树→LLM 决策→执行循环；界面指纹循环检测 + 步数上限 + 危险控件黑名单（卸载/支付/短信等）+ 崩溃即停 |
+| 时间轴回放 | `replay_<用例>.html`：单文件零外链，内嵌截图 + 时间轴滑块/播放，每步含动作、Activity、该步时间窗日志 |
+
+真机验证（Smart POS 1 / Android 13）：脚本模式全链路通过；探索模式决策-执行闭环通过。
+
 ## 使用
 
 ```bash
@@ -28,8 +39,11 @@ pip install -e .            # 依赖仅 PyYAML
 ada devices                 # 列出设备
 ada profile <serial>        # 设备画像
 ada install app.apk -s <serial>
-ada run examples/login_flow.yaml -s <serial> -p com.example.app   # 执行+诊断+报告
+ada run examples/login_flow.yaml -s <serial> -p com.example.app   # 执行+诊断+报告+回放
+ada run case.yaml -s <serial> --llm                               # 启用 LLM 深度诊断
+ada explore "测试登录流程找 bug" -s <serial> -p com.example.app    # LLM 自主探索
 ada diagnose crash.log -p com.example.app                         # 离线日志诊断
+ada crashes history                                               # 崩溃指纹库历史
 ```
 
 MCP Server（挂 WorkBuddy / Claude / Cursor）：
