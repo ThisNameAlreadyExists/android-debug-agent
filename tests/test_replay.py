@@ -16,10 +16,10 @@ class TestReplay(unittest.TestCase):
         bundle = LogBundle(markers=[{"ts": 1.0, "label": "step 0"}],
                            lines=[LogLine(1.5, "", "E", "T", 1, "boom")])
         html = render_html(trace, [d], bundle)
-        self.assertIn("时间轴回放", html)
+        self.assertIn("执行步骤", html)
         self.assertIn("fp1", html)
-        self.assertIn('"action": "launch"', html)
-        self.assertIn("boom" if False else "slider", html)
+        self.assertIn("launch", html)
+        self.assertIn("boom", html)  # 该步时间窗内的日志应内联展示
 
     def test_no_screenshot_ok(self):
         trace = ExecutionTrace(case_name="c2", started_at=0.0, finished_at=1.0)

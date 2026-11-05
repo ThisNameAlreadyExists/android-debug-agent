@@ -1,14 +1,12 @@
-"""时间轴回放 HTML 报告（设计方案 §8.3）。
+"""HTML 报告 —— 按时间顺序列出每一步（截图 + 动作 + 日志）。
 
-单文件 HTML：内嵌 base64 截图 + 时间轴滑块，拖动即还原每一步的
-截图 / 动作 / Activity / 对应日志段。零外链，可离线分发。
+单文件 HTML：内嵌 base64 截图，零外链，可离线分发。
 """
 
 from __future__ import annotations
 
 import base64
 import html
-import json
 import time
 from pathlib import Path
 from typing import Optional
@@ -28,10 +26,11 @@ def _img_b64(path: str) -> str:
 
 def render_html(trace: ExecutionTrace, diagnoses: list[Diagnosis],
                 bundle: Optional[LogBundle] = None,
-                title: str = "调试回放报告") -> str:
-    # 每步帧：截图 + 元信息 + 该步时间窗内的日志摘录
-    frames = []
+                title: str = "调试报告") -> str:
     markers = bundle.markers if bundle else []
+
+    # 按时间顺序逐步铺排
+    step_html = ""
     for i, s in enumerate(trace.steps):
         logs: list[str] = []
         if bundle and i < len(markers):
@@ -39,12 +38,20 @@ def render_html(trace: ExecutionTrace, diagnoses: list[Diagnosis],
             t1 = markers[i + 1]["ts"] if i + 1 < len(markers) else float("inf")
             logs = [f"[{l.level}/{l.tag}] {l.message}" for l in bundle.lines
                     if t0 <= l.ts < t1][:30]
-        frames.append({
-            "i": i, "action": s.action, "detail": s.detail, "ok": s.ok,
-            "activity": s.activity, "ms": s.duration_ms,
-            "img": _img_b64(s.screenshot) if s.screenshot else "",
-            "logs": logs,
-        })
+        ts = time.strftime("%H:%M:%S", time.localtime(markers[i]["ts"])) \
+            if i < len(markers) else ""
+        img = _img_b64(s.screenshot) if s.screenshot else ""
+        img_tag = f'<img src="{img}">' if img else '<div class="noshot">无截图</div>'
+        log_block = f'<pre class="logs">{html.escape(chr(10).join(logs))}</pre>' \
+            if logs else '<p class="nolog">该步时间窗内无日志</p>'
+        badge = "ok" if s.ok else "fail"
+        step_html += f"""<div class="step">
+<div class="stephead"><span class="badge {badge}">{'✓' if s.ok else '✗'}</span>
+<b>第 {s.index} 步 · {html.escape(s.action)}</b>
+<span class="ts">{ts} · {s.duration_ms}ms · {html.escape(s.activity)}</span></div>
+<div class="stepbody"><div class="shot">{img_tag}</div>
+<div class="detail"><p>{html.escape(s.detail)}</p>{log_block}</div></div>
+</div>"""
 
     diag_html = ""
     for d in diagnoses:
@@ -56,25 +63,26 @@ def render_html(trace: ExecutionTrace, diagnoses: list[Diagnosis],
 定位：<code>{html.escape(loc_s)}</code><br>指纹：<code>{d.fingerprint}</code><br>
 建议：{html.escape(d.suggested_fix)}</div>"""
 
-    payload = json.dumps(frames, ensure_ascii=False)
     status = "通过" if trace.passed else f"失败 @ 第{trace.failure_step}步"
     return f"""<!DOCTYPE html>
 <html lang="zh"><head><meta charset="utf-8"><title>{html.escape(title)}</title>
 <style>
 body{{font-family:-apple-system,'PingFang SC',sans-serif;max-width:960px;margin:24px auto;padding:0 16px;color:#222}}
 header{{border-bottom:2px solid #333;padding-bottom:8px}}
-.badge{{padding:2px 10px;border-radius:10px;color:#fff;font-size:13px}}
+.badge{{padding:2px 8px;border-radius:8px;color:#fff;font-size:13px}}
 .fail{{background:#c0392b}} .ok{{background:#27ae60}}
-#stage{{display:flex;gap:16px;margin-top:16px}}
-#shot{{width:300px;min-height:400px;background:#f4f4f4;border:1px solid #ddd}}
-#shot img{{width:100%}}
-#meta{{flex:1}}
-#meta div{{margin:4px 0}}
-input[type=range]{{width:100%;margin:12px 0}}
-#logs{{background:#111;color:#0c0;font:12px/1.5 monospace;padding:10px;height:220px;overflow:auto;white-space:pre-wrap}}
+.step{{border:1px solid #ddd;border-radius:8px;margin:14px 0;overflow:hidden}}
+.stephead{{background:#f7f7f7;padding:8px 14px;display:flex;gap:10px;align-items:center}}
+.ts{{color:#888;font-size:12px;margin-left:auto}}
+.stepbody{{display:flex;gap:14px;padding:12px 14px}}
+.shot img{{width:220px;border:1px solid #eee}}
+.noshot{{width:180px;padding:40px 0;text-align:center;color:#999;background:#fafafa}}
+.detail{{flex:1}}
+.detail p{{margin:0 0 8px}}
+.logs{{background:#111;color:#0c0;font:12px/1.5 monospace;padding:10px;max-height:220px;overflow:auto;white-space:pre-wrap;border-radius:6px}}
+.nolog{{color:#999;font-size:13px}}
 .diag{{background:#fdf6e3;border-left:4px solid #e67e22;padding:10px 14px;margin:10px 0}}
 .conf{{color:#888;font-size:12px;margin-left:8px}}
-button{{margin:0 4px;padding:4px 12px}}
 </style></head><body>
 <header><h2>{html.escape(title)}</h2>
 用例 <b>{html.escape(trace.case_name)}</b> · 结果 <span class="badge {'ok' if trace.passed else 'fail'}">{status}</span>
@@ -83,27 +91,6 @@ button{{margin:0 4px;padding:4px 12px}}
 <h3>诊断结论（{len(diagnoses)}）</h3>
 {diag_html or '<p>未检出异常。</p>'}
 
-<h3>时间轴回放</h3>
-<input type="range" id="slider" min="0" max="{max(len(frames)-1,0)}" value="0">
-<div><button onclick="play()">▶ 播放</button><button onclick="pause()">⏸ 暂停</button></div>
-<div id="stage">
-<div id="shot"></div>
-<div id="meta"><div id="info"></div><div id="logs"></div></div>
-</div>
-<script>
-const F = {payload};
-let cur = 0, timer = null;
-function show(i) {{
-  cur = i; document.getElementById('slider').value = i;
-  const f = F[i]; if (!f) return;
-  document.getElementById('shot').innerHTML = f.img ? `<img src="${{f.img}}">` : '<p style="padding:20px;color:#999">无截图</p>';
-  document.getElementById('info').innerHTML =
-    `<b>第 ${{f.i}} 步</b> ${{f.ok?'✅':'❌'}} 动作：<code>${{f.action}}</code><br>` +
-    `详情：${{f.detail}}<br>Activity：${{f.activity}} · ${{f.ms}}ms`;
-  document.getElementById('logs').textContent = f.logs.join('\\n') || '（该步时间窗内无日志）';
-}}
-function play() {{ pause(); timer = setInterval(() => {{ if (cur < F.length-1) show(cur+1); else pause(); }}, 1000); }}
-function pause() {{ if (timer) clearInterval(timer); timer = null; }}
-document.getElementById('slider').oninput = e => show(+e.target.value);
-show(0);
-</script></body></html>"""
+<h3>执行步骤</h3>
+{step_html}
+</body></html>"""
