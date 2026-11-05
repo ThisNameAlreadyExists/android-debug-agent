@@ -18,9 +18,25 @@ from .device import DeviceGateway
 from .explore import Explorer
 from .llm import LLMError, OllamaClient
 from .logcapture import LogcatCapture, LogBundle, LogLine, FATAL_RE, ANR_RE
+from .minimize import minimize
+from .privacy import PrivacyGate
 from .replay import render_html
 from .reporter import render_markdown, write_report
 from .scenario import ScenarioRunner, load_case
+from .verify import load_caselib, sink_case, verify_fix
+
+
+def _make_llm(enabled: bool, workdir: str = "./ada_out"):
+    if not enabled:
+        return None
+    try:
+        gate = PrivacyGate(audit_path=Path(workdir) / "privacy_audit.jsonl")
+        llm = OllamaClient(gate=gate)
+        llm.chat("ping", system="只回复 pong")  # 可用性探测
+        return llm
+    except LLMError as e:
+        print(f"⚠️ LLM 不可用，降级为纯规则模式：{e}", file=sys.stderr)
+        return None
 
 
 def _make_llm(enabled: bool):
@@ -93,6 +109,25 @@ def main() -> None:
     p.add_argument("action", choices=["history", "fixed", "show"])
     p.add_argument("value", nargs="?", default="", help="fixed/show 时传指纹；history 时传包名（可空）")
 
+    p = sub.add_parser("verify", help="修复验证：装新APK重跑原场景，原指纹消失且全过=修复确认")
+    p.add_argument("case")
+    p.add_argument("-s", "--serial")
+    p.add_argument("-p", "--package", default="")
+    p.add_argument("--apk", default="", help="修复后的新 APK（可选，给了就先装）")
+    p.add_argument("--fingerprint", required=True, help="要验证消失的崩溃指纹")
+
+    p = sub.add_parser("regress", help="跑回归用例库全部用例")
+    p.add_argument("-s", "--serial")
+    p.add_argument("-p", "--package", default="")
+    p.add_argument("--llm", action="store_true")
+
+    p = sub.add_parser("minimize", help="复现路径压缩：把用例精简到最小可复现序列")
+    p.add_argument("case")
+    p.add_argument("-s", "--serial")
+    p.add_argument("-p", "--package", default="")
+    p.add_argument("--fingerprint", required=True)
+    p.add_argument("--max-reruns", type=int, default=12)
+
     p = sub.add_parser("diagnose", help="离线诊断 logcat 文件")
     p.add_argument("logfile")
     p.add_argument("-p", "--package", default="")
@@ -126,7 +161,7 @@ def main() -> None:
         return
 
     if args.cmd == "run":
-        llm = _make_llm(args.llm)
+        llm = _make_llm(args.llm, args.workdir)
         cap = LogcatCapture(ch, serial=args.serial, package=args.package)
         runner = ScenarioRunner(ch, workdir=Path(args.workdir), capture=cap)
         trace, bundle = runner.run(load_case(args.case), serial=args.serial,
@@ -160,7 +195,7 @@ def main() -> None:
         sys.exit(0 if trace.passed else 2)
 
     if args.cmd == "explore":
-        llm = _make_llm(True)
+        llm = _make_llm(True, args.workdir)
         if not llm:
             print("探索模式依赖本地 LLM（Ollama），当前不可用", file=sys.stderr)
             sys.exit(1)
@@ -197,6 +232,85 @@ def main() -> None:
             agg = db.aggregate(args.value)
             print(json.dumps(agg, ensure_ascii=False, indent=2))
         db.close()
+        return
+
+    def _run_and_diagnose(case, llm=None):
+        """跑一次用例并诊断，返回 (trace, bundle, diagnoses)。"""
+        cap = LogcatCapture(ch, serial=args.serial, package=args.package)
+        runner = ScenarioRunner(ch, workdir=Path(args.workdir), capture=cap)
+        trace, bundle = runner.run(case, serial=args.serial, package=args.package)
+        analyst = LogAnalyst(llm=llm)
+        diagnoses = analyst.analyze(bundle, args.package,
+                                    context=case.get("name", "")) if bundle else []
+        return trace, bundle, diagnoses
+
+    if args.cmd == "verify":
+        case = load_case(args.case)
+        if args.apk:
+            prof = DeviceGateway(ch).profile(args.serial)
+            AppController(ch).install(args.apk, args.serial,
+                                      device_abi=prof.abi, device_sdk=prof.sdk)
+            print(f"已安装修复版 APK: {args.apk}")
+        trace, bundle, diagnoses = _run_and_diagnose(case)
+        fps_now = [d.fingerprint for d in diagnoses]
+        db = CrashDB(Path(args.workdir) / "crashdb.sqlite")
+        res = verify_fix(
+            fingerprints_before=[args.fingerprint],
+            run_case=lambda c: (trace.passed, fps_now),  # 已跑完，直接回放结果
+            case=case,
+            db_mark_fixed=db.mark_fixed,
+            caselib_dir=Path(args.workdir) / "regression_cases")
+        db.close()
+        print(f"修复验证：{'✅ ' + res.reason if res.fixed else '❌ ' + res.reason}")
+        if res.case_sunk:
+            print(f"用例已沉淀: {res.case_sunk}")
+        sys.exit(0 if res.fixed else 2)
+
+    if args.cmd == "regress":
+        cases = load_caselib(Path(args.workdir) / "regression_cases")
+        if not cases:
+            print("回归用例库为空（verify 修复确认后自动沉淀）")
+            return
+        llm = _make_llm(args.llm, args.workdir)
+        db = CrashDB(Path(args.workdir) / "crashdb.sqlite")
+        failed = 0
+        for case in cases:
+            trace, bundle, diagnoses = _run_and_diagnose(case, llm)
+            notes = _record_crashes(db, diagnoses, args.package, None)
+            fp = case.get("meta", {}).get("fingerprint", "")
+            reproduced = fp and any(d.fingerprint == fp for d in diagnoses)
+            ok = trace.passed and not reproduced
+            failed_mark = "" if ok else "  <-- 回归失败"
+            if not ok:
+                failed += 1
+            print(f"{'✅' if ok else '❌'} {case.get('name','?')} "
+                  f"({len(case.get('steps', []))} 步){failed_mark}")
+            for n in notes:
+                print("   ", n)
+        db.close()
+        print(f"\n回归完成：{len(cases) - failed}/{len(cases)} 通过")
+        sys.exit(0 if failed == 0 else 2)
+
+    if args.cmd == "minimize":
+        case = load_case(args.case)
+        def _rerun(trial):
+            _, bundle, diagnoses = _run_and_diagnose(trial)
+            for d in diagnoses:
+                if d.fingerprint == args.fingerprint:
+                    return d.fingerprint
+            return None
+        res = minimize(case, args.fingerprint, _rerun,
+                       max_reruns=args.max_reruns)
+        print(f"压缩完成：{res.original_steps} 步 → {res.minimized_steps} 步 "
+              f"（重跑 {res.reruns} 次，{'收敛' if res.converged else '达重跑上限'}）")
+        out = Path(args.workdir) / f"minimized_{args.fingerprint}.yaml"
+        mini_case = dict(case)
+        mini_case["steps"] = res.steps
+        mini_case["name"] = f"min_{args.fingerprint}"
+        import yaml as _yaml
+        with open(out, "w", encoding="utf-8") as f:
+            _yaml.safe_dump(mini_case, f, allow_unicode=True, sort_keys=False)
+        print(f"最小复现用例: {out}")
         return
 
     if args.cmd == "diagnose":

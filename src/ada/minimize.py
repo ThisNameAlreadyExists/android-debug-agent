@@ -1,0 +1,88 @@
+"""复现路径压缩（设计方案 §8.2，ddmin 变体）。
+
+给定一个能触发崩溃的用例，自动删减步骤直到找到
+「仍然触发同一指纹崩溃」的最小步骤序列。
+
+判据：重跑后捕获到与原始崩溃相同 fingerprint 的崩溃。
+保护：wait/launch 类结构性步骤不可删（可配置）；总重跑次数上限。
+"""
+
+from __future__ import annotations
+
+import copy
+from dataclasses import dataclass, field
+from typing import Callable, Optional
+
+
+@dataclass
+class MinimizeResult:
+    original_steps: int
+    minimized_steps: int
+    steps: list[dict] = field(default_factory=list)
+    reruns: int = 0
+    converged: bool = True
+
+
+# 结构性步骤：删除会改变场景语义，默认不参与删减
+_STRUCTURAL = ("launch", "clear_data", "grant")
+
+
+def _is_structural(step: dict) -> bool:
+    return any(k in step for k in _STRUCTURAL)
+
+
+def minimize(
+    case: dict,
+    target_fingerprint: str,
+    rerun: Callable[[dict], Optional[str]],
+    max_reruns: int = 12,
+    keep_structural: bool = True,
+) -> MinimizeResult:
+    """ddmin-lite：按块删减可删步骤。
+
+    rerun(case) -> 本次崩溃指纹（未崩溃返回 None）。
+    """
+    steps: list[dict] = copy.deepcopy(case.get("steps", []))
+    reruns = 0
+
+    def triggers(candidate: list[dict]) -> bool:
+        nonlocal reruns
+        if reruns >= max_reruns:
+            return False
+        reruns += 1
+        trial = copy.deepcopy(case)
+        trial["steps"] = copy.deepcopy(candidate)
+        return rerun(trial) == target_fingerprint
+
+    # 逐块贪心删减：块大小从大到小
+    removable = [i for i, s in enumerate(steps) if not _is_structural(s)] \
+        if keep_structural else list(range(len(steps)))
+
+    chunk = max(1, len(removable) // 2)
+    while removable and reruns < max_reruns:
+        changed = False
+        i = 0
+        while i < len(removable) and reruns < max_reruns:
+            group = removable[i:i + chunk]
+            trial_steps = [s for j, s in enumerate(steps) if j not in group]
+            if triggers(trial_steps):
+                # 删减成功：接受并重新计算可删集合
+                steps = trial_steps
+                removable = [j for j, s in enumerate(steps) if not _is_structural(s)] \
+                    if keep_structural else list(range(len(steps)))
+                changed = True
+                i = 0
+            else:
+                i += chunk
+        if not changed:
+            if chunk == 1:
+                break
+            chunk = max(1, chunk // 2)
+
+    return MinimizeResult(
+        original_steps=len(case.get("steps", [])),
+        minimized_steps=len(steps),
+        steps=steps,
+        reruns=reruns,
+        converged=reruns < max_reruns,
+    )

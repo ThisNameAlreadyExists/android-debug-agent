@@ -30,7 +30,18 @@ LLM 驱动的安卓真机调试 / 自动化测试 / 日志诊断智能体。
 | 探索模式 | `ada explore "目标"`：UI 树→LLM 决策→执行循环；界面指纹循环检测 + 步数上限 + 危险控件黑名单（卸载/支付/短信等）+ 崩溃即停 |
 | 时间轴回放 | `replay_<用例>.html`：单文件零外链，内嵌截图 + 时间轴滑块/播放，每步含动作、Activity、该步时间窗日志 |
 
-真机验证（Smart POS 1 / Android 13）：脚本模式全链路通过；探索模式决策-执行闭环通过。
+真机验证（Smart POS 1 / Android 13）：脚本模式全链路通过；探索模式决策-执行闭环通过（含真实 qwen2.5:14b 驱动）。
+
+## 三期已实现（V0.3.0）
+
+| 模块 | 能力 |
+|---|---|
+| 修复验证闭环 | `ada verify case.yaml --fingerprint <fp> [--apk 修复版.apk]`：装新版→重跑→原指纹消失且全过=修复确认→自动 mark_fixed + 用例沉淀 |
+| 用例自动沉淀 | 修复确认后复现用例固化入 `regression_cases/`（按指纹去重）；`ada regress` 一键全量回归，原指纹重现即报回归失败 |
+| 复现路径压缩 | `ada minimize case.yaml --fingerprint <fp>`：ddmin 变体自动删减步骤，产出最小可复现 YAML（结构性步骤 launch/clear_data/grant 保护不删） |
+| 隐私分级管道 | `ADA_PRIVACY=L0/L1/L2`：L0 仅本地模型 / L1 脱敏后可发云端（默认）/ L2 全量；每批外发记 `privacy_audit.jsonl` 审计 |
+
+**多设备说明**：所有命令带 `-s <serial>` 路由指定设备，多台连接时可分别操作；并行对照诊断（多设备同时跑同一用例并 diff）属四期。
 
 ## 使用
 

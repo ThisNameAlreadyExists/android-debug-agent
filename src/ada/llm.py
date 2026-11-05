@@ -39,14 +39,18 @@ class OllamaClient:
     thinking 模型需大 max_tokens 否则 content 为空，不建议用于决策循环）。"""
 
     def __init__(self, base: Optional[str] = None, model: Optional[str] = None,
-                 timeout: float = 120.0):
+                 timeout: float = 120.0, gate=None):
         self.base = (base or os.environ.get("ADA_OLLAMA_BASE")
                      or "http://localhost:11434").rstrip("/")
         self.model = model or os.environ.get("ADA_OLLAMA_MODEL") or "qwen2.5:14b"
         self.timeout = timeout
+        self.gate = gate  # PrivacyGate，可选
 
     def chat(self, prompt: str, system: str = "") -> str:
-        """单轮对话。返回 content 文本。失败抛 LLMError。"""
+        """单轮对话。返回 content 文本。失败抛 LLMError。外发前过隐私闸门。"""
+        if self.gate is not None:
+            prompt = self.gate.outbound(prompt, f"ollama:local:{self.model}")
+            system = self.gate.outbound(system, f"ollama:local:{self.model}") if system else system
         messages = []
         messages.append({"role": "system",
                          "content": system or "你是安卓崩溃诊断专家。只输出被要求的格式，不要寒暄。"})
