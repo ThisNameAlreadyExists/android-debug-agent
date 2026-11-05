@@ -64,9 +64,29 @@ class CrashDB:
     def __init__(self, path: str | Path):
         self.path = str(path)
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path)
-        self._conn.executescript(_SCHEMA)
-        self._conn.commit()
+        self._conn = self._open_with_recovery()
+
+    def _open_with_recovery(self) -> sqlite3.Connection:
+        """打开数据库；若因残留 journal 等导致 I/O 错误，自动回滚恢复一次。"""
+        for attempt in range(2):
+            try:
+                conn = sqlite3.connect(self.path, timeout=30)
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute("PRAGMA journal_mode=TRUNCATE")
+                conn.executescript(_SCHEMA)
+                return conn
+            except sqlite3.OperationalError:
+                if attempt == 0:
+                    # 触发 journal 回滚自愈
+                    try:
+                        tmp = sqlite3.connect(self.path, timeout=30)
+                        tmp.execute("PRAGMA integrity_check")
+                        tmp.close()
+                    except sqlite3.Error:
+                        pass
+                else:
+                    raise
+        raise sqlite3.OperationalError(f"无法打开 {self.path}")
 
     def close(self) -> None:
         self._conn.close()

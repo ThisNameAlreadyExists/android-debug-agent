@@ -84,16 +84,22 @@ class UiInspector:
     def __init__(self, channel: AdbChannel):
         self.ch = channel
 
-    def dump(self, serial: Optional[str] = None) -> list[UiNode]:
-        res = self.ch.shell("uiautomator dump /data/local/tmp/ada_ui.xml", serial=serial)
-        if not res.ok or "UI hierchary dumped" not in res.stdout.replace("hierchary", "hierarchy"):
-            # uiautomator 输出有拼写差异，宽松判断
-            if not res.ok:
-                raise UnsupportedError(f"uiautomator dump 失败: {res.stderr}")
-        xml_res = self.ch.shell("cat /data/local/tmp/ada_ui.xml", serial=serial)
-        if not xml_res.ok:
-            raise UnsupportedError("读取 UI 树失败")
-        return parse_ui_tree(xml_res.stdout)
+    def dump(self, serial: Optional[str] = None, retries: int = 2) -> list[UiNode]:
+        """dump UI 树。高负载下 uiautomator 可能返回空根节点，重试。"""
+        last_err = ""
+        for _ in range(retries + 1):
+            res = self.ch.shell("uiautomator dump /data/local/tmp/ada_ui.xml", serial=serial)
+            xml_res = self.ch.shell("cat /data/local/tmp/ada_ui.xml", serial=serial)
+            if res.ok and xml_res.ok:
+                nodes = parse_ui_tree(xml_res.stdout)
+                if nodes:
+                    return nodes
+                last_err = "dump 返回空 UI 树"
+            else:
+                last_err = res.stderr or xml_res.stderr
+            import time as _t
+            _t.sleep(1.0)
+        raise UnsupportedError(f"uiautomator dump 失败: {last_err}")
 
     def tap_node(self, node: UiNode, serial: Optional[str] = None) -> None:
         x, y = node.center

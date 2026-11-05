@@ -93,13 +93,13 @@ class LogcatCapture:
             line = self._parse_line(raw.rstrip("\n"), ts)
             if line is None:
                 continue
-            # 包过滤：已知 pid 时只保留该 pid 的行 + AndroidRuntime/DEBUG 等系统崩溃通道；
-            # pid 未知（应用未启动）退化为消息含包名的行
+            # 包过滤：已知 pid 时只保留该 pid 的行（目标应用的崩溃栈各行都带其 pid）
+            # + pid=0 的未解析行（上下文保留）；pid 未知时退化为消息含包名
             if self.package:
-                if self._pid and line.pid != self._pid and \
-                        line.tag not in ("AndroidRuntime", "DEBUG", "ActivityManager"):
-                    continue
-                if not self._pid and line.pid == 0 and self.package not in line.message:
+                if self._pid:
+                    if line.pid != 0 and line.pid != self._pid:
+                        continue
+                elif line.pid == 0 and self.package not in line.message:
                     continue
             with self._lock:
                 idx = self._line_count

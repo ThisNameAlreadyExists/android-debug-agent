@@ -1,0 +1,22 @@
+# 实战用例：Generic Battery Drainer 放电流程
+# 场景：开启屏幕唤醒 → 开始放电 → 放电中旋转屏幕（chaos）→ 停止
+name: battery_drain
+timeout: 120
+steps:
+  - clear_data: com.lohjason.genericbatterydrainer
+  - launch: com.lohjason.genericbatterydrainer
+  - wait: 3
+  - screenshot: true
+  # 开启 Wake Lock & Screen（初始 OFF），CPU/GPU 负载默认已开
+  - tap: {id: "com.lohjason.genericbatterydrainer:id/switch_screen"}
+  - wait: 1
+  - tap: {text: "Start"}
+  - wait: 15
+  - screenshot: true
+  # 放电进行中旋转屏幕 —— 杀 Activity 重建导致的状态丢失
+  - chaos: {type: rotate, times: 2}
+  - wait: 3
+  - screenshot: true
+  - tap: {text: "Stop"}
+  - wait: 2
+  - screenshot: true

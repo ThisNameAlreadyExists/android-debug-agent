@@ -54,6 +54,7 @@ class ScenarioRunner:
         self.ch = channel
         self.app = AppController(channel)
         self.ui = UiInspector(channel)
+        self._last_shot_error = ""
         self.workdir = Path(workdir or "./ada_out")
         self.workdir.mkdir(parents=True, exist_ok=True)
         (self.workdir / "shots").mkdir(exist_ok=True)
@@ -67,10 +68,19 @@ class ScenarioRunner:
         remote = f"/data/local/tmp/{name}.png"
         r1 = self.ch.shell(f"screencap -p {remote}", serial=serial)
         if not r1.ok:
+            # 设备休眠时部分机型 screencap 静默失败（rc=1 无报错）：唤醒后重试一次
+            self.ch.shell("input keyevent KEYCODE_WAKEUP", serial=serial)
+            time.sleep(1.0)
+            r1 = self.ch.shell(f"screencap -p {remote}", serial=serial)
+        if not r1.ok:
+            self._last_shot_error = "screencap 失败（已尝试唤醒重试）"
             return ""
         r2 = self.ch.pull(remote, str(path), serial=serial)
         self.ch.shell(f"rm -f {remote}", serial=serial)
-        return str(path) if r2.ok else ""
+        if not r2.ok:
+            self._last_shot_error = f"pull 失败: {r2.stderr or r2.stdout}"
+            return ""
+        return str(path)
 
     def _current_activity(self, serial: Optional[str]) -> str:
         import re
@@ -181,6 +191,9 @@ class ScenarioRunner:
                 sr.duration_ms = int((time.monotonic() - t0) * 1000)
                 sr.activity = self._current_activity(serial)
                 sr.screenshot = self._screenshot(serial, f"{name}_step{i}")
+                if not sr.screenshot and self._last_shot_error:
+                    sr.detail += f"（截图失败：{self._last_shot_error}）"
+                    self._last_shot_error = ""
                 trace.steps.append(sr)
                 if not sr.ok:
                     break
