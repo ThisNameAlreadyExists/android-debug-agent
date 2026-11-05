@@ -59,6 +59,7 @@ class LogcatCapture:
         self.serial = serial
         self.package = package
         self.level = level
+        self._pid: int = 0  # 目标进程 pid，start 时解析
         self.buffer: deque[LogLine] = deque(maxlen=buffer_size)
         self.crash_indices: list[int] = []
         self.anr_indices: list[int] = []
@@ -92,8 +93,14 @@ class LogcatCapture:
             line = self._parse_line(raw.rstrip("\n"), ts)
             if line is None:
                 continue
-            if self.package and line.pid == 0 and self.package not in line.message:
-                continue
+            # 包过滤：已知 pid 时只保留该 pid 的行 + AndroidRuntime/DEBUG 等系统崩溃通道；
+            # pid 未知（应用未启动）退化为消息含包名的行
+            if self.package:
+                if self._pid and line.pid != self._pid and \
+                        line.tag not in ("AndroidRuntime", "DEBUG", "ActivityManager"):
+                    continue
+                if not self._pid and line.pid == 0 and self.package not in line.message:
+                    continue
             with self._lock:
                 idx = self._line_count
                 self.buffer.append(line)
@@ -104,6 +111,10 @@ class LogcatCapture:
                 self._line_count += 1
 
     def start(self) -> None:
+        if self.package:
+            out = self.ch.shell(f"pidof {self.package}", serial=self.serial)
+            first = out.stdout.split()[0] if out.ok and out.stdout.split() else ""
+            self._pid = int(first) if first.isdigit() else 0
         args = [self.ch.adb_path]
         if self.serial:
             args += ["-s", self.serial]

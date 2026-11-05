@@ -64,6 +64,9 @@ PROTECTED_ROOTS = ("/", "/system", "/vendor", "/data", "/proc", "/sys")
 def classify_shell(cmd: str) -> Risk:
     """对单条 shell 命令做风险分级。取最高风险命中项。"""
     cmd = cmd.strip()
+    # 系统自身临时区（/data/local/tmp）内的 rm -f 降级为 YELLOW：调试临时文件清理是常态操作
+    if re.match(r"^rm\s+-f\s+/data/local/tmp/\S+$", cmd):
+        return Risk.YELLOW
     for red in _RED_BIN:
         if cmd == red or cmd.startswith(red + " "):
             return Risk.RED
