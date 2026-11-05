@@ -27,6 +27,18 @@ class TestReplay(unittest.TestCase):
         html = render_html(trace, [], None)
         self.assertIn("无截图", html)
 
+    def test_env_info_rendered(self):
+        from ada.device import DeviceProfile
+        trace = ExecutionTrace(case_name="c3", started_at=0.0, finished_at=1.0)
+        prof = DeviceProfile(serial="S1", model="POS 1", brand="CATHAYTOP",
+                             android_release="13", sdk=33, abi="arm64-v8a",
+                             rom="aosp/other", rooted=False, screen="720x1440",
+                             density=320, battery_level=80)
+        html = render_html(trace, [], None, profile=prof)
+        self.assertIn("环境信息", html)
+        self.assertIn("POS 1", html)
+        self.assertIn("SDK 33", html)
+
 
 if __name__ == "__main__":
     unittest.main()

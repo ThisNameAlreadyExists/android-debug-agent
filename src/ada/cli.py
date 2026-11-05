@@ -42,18 +42,6 @@ def _make_llm(enabled: bool, workdir: str = "./ada_out"):
         return None
 
 
-def _make_llm(enabled: bool):
-    if not enabled:
-        return None
-    try:
-        llm = OllamaClient()
-        llm.chat("ping", system="只回复 pong")  # 可用性探测
-        return llm
-    except LLMError as e:
-        print(f"⚠️ LLM 不可用，降级为纯规则模式：{e}", file=sys.stderr)
-        return None
-
-
 def _record_crashes(db: CrashDB, diagnoses, package: str,
                     profile) -> list[str]:
     """诊断结果入指纹库。返回提示信息列表（新指纹/回归告警）。"""
@@ -192,7 +180,7 @@ def main() -> None:
                 pass
         md = render_markdown(trace, diagnoses, prof, bundle)
         rp = write_report(md, str(Path(args.workdir) / f"report_{trace.case_name}.md"))
-        hp = write_report(render_html(trace, diagnoses, bundle),
+        hp = write_report(render_html(trace, diagnoses, bundle, profile=prof),
                           str(Path(args.workdir) / f"replay_{trace.case_name}.html"))
 
         db = CrashDB(Path(args.workdir) / "crashdb.sqlite")

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from .analyst import Diagnosis
+from .device import DeviceProfile
 from .logcapture import LogBundle
 from .scenario import ExecutionTrace
 
@@ -26,8 +27,19 @@ def _img_b64(path: str) -> str:
 
 def render_html(trace: ExecutionTrace, diagnoses: list[Diagnosis],
                 bundle: Optional[LogBundle] = None,
-                title: str = "调试报告") -> str:
+                title: str = "调试报告",
+                profile: Optional[DeviceProfile] = None) -> str:
     markers = bundle.markers if bundle else []
+
+    env_html = ""
+    if profile:
+        p = profile
+        env_html = f"""<h3>环境信息</h3>
+<table class="env">
+<tr><td>设备</td><td>{html.escape(p.brand)} {html.escape(p.model)}（{html.escape(p.serial)}）</td></tr>
+<tr><td>系统</td><td>Android {html.escape(p.android_release)} (SDK {p.sdk}) · ROM {html.escape(p.rom)}</td></tr>
+<tr><td>硬件</td><td>ABI {html.escape(p.abi)} · {html.escape(p.screen)}@{p.density}dpi · root {'是' if p.rooted else '否'} · 电量 {p.battery_level}%</td></tr>
+</table>"""
 
     # 按时间顺序逐步铺排
     step_html = ""
@@ -83,10 +95,14 @@ header{{border-bottom:2px solid #333;padding-bottom:8px}}
 .nolog{{color:#999;font-size:13px}}
 .diag{{background:#fdf6e3;border-left:4px solid #e67e22;padding:10px 14px;margin:10px 0}}
 .conf{{color:#888;font-size:12px;margin-left:8px}}
+.env{{border-collapse:collapse}}
+.env td{{border:1px solid #ddd;padding:4px 14px;font-size:14px}}
+.env td:first-child{{background:#f7f7f7;color:#555;width:70px}}
 </style></head><body>
 <header><h2>{html.escape(title)}</h2>
 用例 <b>{html.escape(trace.case_name)}</b> · 结果 <span class="badge {'ok' if trace.passed else 'fail'}">{status}</span>
 · {len(trace.steps)} 步 · {trace.finished_at - trace.started_at:.1f}s</header>
+{env_html}
 
 <h3>诊断结论（{len(diagnoses)}）</h3>
 {diag_html or '<p>未检出异常。</p>'}
