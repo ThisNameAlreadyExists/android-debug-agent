@@ -60,33 +60,36 @@ class CrashRecord:
             self.source_location = {}
 
 
+def open_sqlite_with_recovery(path: str, schema: str = "") -> sqlite3.Connection:
+    """打开 SQLite；若因残留 journal 等导致 I/O 错误，触发回滚自愈后重试一次。"""
+    for attempt in range(2):
+        try:
+            conn = sqlite3.connect(path, timeout=30)
+            conn.execute("PRAGMA busy_timeout=30000")
+            # MEMORY 日志模式：不产生磁盘 journal 文件，避免进程被杀后
+            # 残留 journal 导致下次打开报 disk I/O error（本地统计库可接受）
+            conn.execute("PRAGMA journal_mode=MEMORY")
+            if schema:
+                conn.executescript(schema)
+            return conn
+        except sqlite3.OperationalError:
+            if attempt == 0:
+                try:
+                    tmp = sqlite3.connect(path, timeout=30)
+                    tmp.execute("PRAGMA integrity_check")
+                    tmp.close()
+                except sqlite3.Error:
+                    pass
+            else:
+                raise
+    raise sqlite3.OperationalError(f"无法打开 {path}")
+
+
 class CrashDB:
     def __init__(self, path: str | Path):
         self.path = str(path)
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = self._open_with_recovery()
-
-    def _open_with_recovery(self) -> sqlite3.Connection:
-        """打开数据库；若因残留 journal 等导致 I/O 错误，自动回滚恢复一次。"""
-        for attempt in range(2):
-            try:
-                conn = sqlite3.connect(self.path, timeout=30)
-                conn.execute("PRAGMA busy_timeout=30000")
-                conn.execute("PRAGMA journal_mode=TRUNCATE")
-                conn.executescript(_SCHEMA)
-                return conn
-            except sqlite3.OperationalError:
-                if attempt == 0:
-                    # 触发 journal 回滚自愈
-                    try:
-                        tmp = sqlite3.connect(self.path, timeout=30)
-                        tmp.execute("PRAGMA integrity_check")
-                        tmp.close()
-                    except sqlite3.Error:
-                        pass
-                else:
-                    raise
-        raise sqlite3.OperationalError(f"无法打开 {self.path}")
+        self._conn = open_sqlite_with_recovery(self.path, _SCHEMA)
 
     def close(self) -> None:
         self._conn.close()

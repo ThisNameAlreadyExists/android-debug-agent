@@ -7,8 +7,10 @@ steps:
   - launch: com.lohjason.genericbatterydrainer
   - wait: 3
   - screenshot: true
-  # 开启 Wake Lock & Screen（初始 OFF），CPU/GPU 负载默认已开
-  - tap: {id: "com.lohjason.genericbatterydrainer:id/switch_screen"}
+  # 确定性开启 GPU 负载（RS 崩溃的必要条件），不依赖默认状态
+  - set_switch: {id: "com.lohjason.genericbatterydrainer:id/switch_gpu", on: true}
+  # Wake Lock & Screen 也用确定性开关
+  - set_switch: {id: "com.lohjason.genericbatterydrainer:id/switch_screen", on: true}
   - wait: 1
   - tap: {text: "Start"}
   - wait: 15

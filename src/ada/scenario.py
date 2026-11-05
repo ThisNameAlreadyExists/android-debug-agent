@@ -110,6 +110,18 @@ class ScenarioRunner:
                                content_desc=spec.get("desc"),
                                exact=spec.get("exact", False))
             return f"tap [{node.text or node.resource_id or node.content_desc}]"
+        if "set_switch" in step:
+            # 确定性开关：检查当前状态，不符才点（可复现的关键）
+            spec = step["set_switch"]
+            want = bool(spec.get("on", True))
+            nodes = self.ui.dump(serial)
+            node = find_node(nodes, resource_id=spec.get("id"), text=spec.get("text"))
+            if node is None:
+                raise LookupError(f"未找到开关: {spec}")
+            if node.checked != want:
+                self.ui.tap_node(node, serial)
+                return f"set_switch {spec.get('id') or spec.get('text')} → {'ON' if want else 'OFF'}"
+            return f"set_switch 已是目标状态 {'ON' if want else 'OFF'}"
         if "input" in step:
             text = str(step["input"]).replace(" ", "%s")
             self.ch.shell(f"input text {text}", serial=serial)
@@ -170,6 +182,15 @@ class ScenarioRunner:
             self.capture.start()
         try:
             for i, step in enumerate(case.get("steps", [])):
+                # 前台守护： kiosk 类设备的后台看门狗会把系统应用顶到前台，
+                # 交互类步骤前确认被测应用仍在前台，否则拉起
+                if package and any(k in step for k in ("tap", "input", "set_switch", "assert_log")):
+                    cur = self._current_activity(serial)
+                    if cur and package not in cur:
+                        self.app.launch(package, serial=serial)
+                        time.sleep(1.5)
+                        if self.capture:
+                            self.capture.mark(f"前台守护: {cur} 抢前台，已拉回 {package}")
                 if time.time() - trace.started_at > timeout:
                     trace.passed = False
                     trace.failure_step = i
@@ -200,8 +221,11 @@ class ScenarioRunner:
         finally:
             trace.finished_at = time.time()
             if self.capture:
+                # 崩溃宽限期：崩溃常滞后最后一步操作 1~2s，等它浮现再停采
+                deadline = time.time() + 5.0
+                while time.time() < deadline and not self.capture.has_crash():
+                    time.sleep(0.5)
                 self.capture.mark("case finished")
-                time.sleep(0.5)  # 等崩溃日志吐完
                 self.capture.stop()
         bundle = self.capture.snapshot() if self.capture else None
         return trace, bundle

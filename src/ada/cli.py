@@ -172,6 +172,9 @@ def main() -> None:
                              rules_path=str(Path(args.workdir) / "rules.json"))
         case_ctx = load_case(args.case).get("name", "")
         diagnoses = analyst.analyze(bundle, args.package, context=case_ctx) if bundle else []
+        # 同一指纹在一次运行内只报一次
+        seen = set()
+        diagnoses = [d for d in diagnoses if not (d.fingerprint in seen or seen.add(d.fingerprint))]
         prof = None
         if args.serial:
             try:
@@ -307,6 +310,9 @@ def main() -> None:
         case = load_case(args.case)
         def _rerun(trial):
             _, bundle, diagnoses = _run_and_diagnose(trial)
+            # "any"：同一崩溃在 Java/native 层表面可能不同，按"目标应用任意崩溃"判定
+            if args.fingerprint == "any":
+                return diagnoses[0].fingerprint if diagnoses else None
             for d in diagnoses:
                 if d.fingerprint == args.fingerprint:
                     return d.fingerprint

@@ -37,22 +37,32 @@ def minimize(
     rerun: Callable[[dict], Optional[str]],
     max_reruns: int = 12,
     keep_structural: bool = True,
+    flaky_confirms: int = 1,
 ) -> MinimizeResult:
     """ddmin-lite：按块删减可删步骤。
 
     rerun(case) -> 本次崩溃指纹（未崩溃返回 None）。
+    flaky_confirms：对「未崩溃」的试探结果再确认 N 次才采信（应对不稳定崩溃）。
     """
     steps: list[dict] = copy.deepcopy(case.get("steps", []))
     reruns = 0
 
-    def triggers(candidate: list[dict]) -> bool:
+    def _crashed(candidate: list[dict]) -> bool:
+        """试探性重跑；「未崩溃」需连续 flaky_confirms+1 次都未崩才采信。"""
         nonlocal reruns
-        if reruns >= max_reruns:
-            return False
-        reruns += 1
-        trial = copy.deepcopy(case)
-        trial["steps"] = copy.deepcopy(candidate)
-        return rerun(trial) == target_fingerprint
+        need = 1 + flaky_confirms
+        for _ in range(need):
+            if reruns >= max_reruns:
+                return False
+            reruns += 1
+            trial = copy.deepcopy(case)
+            trial["steps"] = copy.deepcopy(candidate)
+            fp = rerun(trial)
+            crashed = (fp is not None) if target_fingerprint == "any" \
+                else (fp == target_fingerprint)
+            if crashed:
+                return True
+        return False
 
     # 逐块贪心删减：块大小从大到小
     removable = [i for i, s in enumerate(steps) if not _is_structural(s)] \
@@ -65,7 +75,7 @@ def minimize(
         while i < len(removable) and reruns < max_reruns:
             group = removable[i:i + chunk]
             trial_steps = [s for j, s in enumerate(steps) if j not in group]
-            if triggers(trial_steps):
+            if _crashed(trial_steps):
                 # 删减成功：接受并重新计算可删集合
                 steps = trial_steps
                 removable = [j for j, s in enumerate(steps) if not _is_structural(s)] \

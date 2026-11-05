@@ -21,6 +21,7 @@ class UiNode:
     class_name: str
     clickable: bool
     bounds: tuple[int, int, int, int]  # left, top, right, bottom
+    checked: bool = False
 
     @property
     def center(self) -> tuple[int, int]:
@@ -49,6 +50,7 @@ def parse_ui_tree(xml_text: str) -> list[UiNode]:
             content_desc=el.get("content-desc", ""),
             class_name=el.get("class", ""),
             clickable=el.get("clickable", "false") == "true",
+            checked=el.get("checked", "false") == "true",
             bounds=tuple(int(x) for x in m.groups()),  # type: ignore
         ))
     return nodes

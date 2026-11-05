@@ -250,7 +250,8 @@ class LogAnalyst:
 
     def _match(self, crash: CrashInfo, package: str) -> Diagnosis:
         text = crash.exception + " " + crash.message
-        if crash.native_signal and not crash.exception:
+        if crash.native_signal:
+            # native 信号优先：Java 层附带的异常名（如 AppError）是表象
             diag = _rule_native(crash)
         else:
             diag = None

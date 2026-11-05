@@ -81,8 +81,8 @@ def collect_perf(ch: AdbChannel, serial: Optional[str], package: str) -> PerfSam
 
 class PerfBaseline:
     def __init__(self, path: str | Path):
-        self._conn = sqlite3.connect(str(path))
-        self._conn.executescript(_SCHEMA)
+        from .crashdb import open_sqlite_with_recovery
+        self._conn = open_sqlite_with_recovery(str(path), _SCHEMA)
 
     def close(self):
         self._conn.close()
