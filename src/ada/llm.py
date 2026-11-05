@@ -35,13 +35,14 @@ def scrub(text: str) -> str:
 
 
 class OllamaClient:
-    """本地 Ollama。默认模型 deepseek-coder:6.7b（Frank 本机已有）。"""
+    """本地 Ollama。默认 qwen2.5:14b（非 thinking 模型，JSON 输出稳定；
+    thinking 模型需大 max_tokens 否则 content 为空，不建议用于决策循环）。"""
 
     def __init__(self, base: Optional[str] = None, model: Optional[str] = None,
                  timeout: float = 120.0):
         self.base = (base or os.environ.get("ADA_OLLAMA_BASE")
                      or "http://localhost:11434").rstrip("/")
-        self.model = model or os.environ.get("ADA_OLLAMA_MODEL") or "deepseek-coder:6.7b"
+        self.model = model or os.environ.get("ADA_OLLAMA_MODEL") or "qwen2.5:14b"
         self.timeout = timeout
 
     def chat(self, prompt: str, system: str = "") -> str:
