@@ -25,8 +25,14 @@ def render_markdown(
         p = profile
         parts.append("## 环境信息\n")
         parts.append(f"- 设备：{p.brand} {p.model}（{p.serial}）")
-        parts.append(f"- 系统：Android {p.android_release} (SDK {p.sdk})，ROM: {p.rom}")
-        parts.append(f"- ABI：{p.abi}，屏幕：{p.screen}@{p.density}dpi，root: {'是' if p.rooted else '否'}\n")
+        parts.append(f"- 系统：Android {p.android_release} (SDK {p.sdk})，ROM: {p.rom}，语言: {p.locale or '未知'}")
+        parts.append(f"- 构建指纹：{p.build_fingerprint or '未知'}")
+        parts.append(f"- 增量版本：{p.incremental or '未知'}，安全补丁：{p.security_patch or '未知'}")
+        parts.append(f"- 内核：{p.kernel or '未知'}，基带：{p.baseband or '未知'}")
+        parts.append(f"- CPU：{p.cpu_hardware or '未知'}（{p.cpu_cores} 核），GPU：{p.gpu_renderer or '未知'}")
+        parts.append(f"- 内存：{p.ram_total_mb}MB 总 / {p.ram_avail_mb}MB 可用，存储：{p.storage_free_gb}GB 可用 / {p.storage_total_gb}GB 总")
+        parts.append(f"- 屏幕：{p.screen}@{p.density}dpi，刷新率 {p.refresh_rate}Hz，ABI：{p.abi}")
+        parts.append(f"- 电池：{p.battery_level}% · {p.battery_temp_c}℃ · {p.battery_voltage_mv}mV · {p.battery_status or '未知'}，root: {'是' if p.rooted else '否'}\n")
 
     if trace:
         parts.append("## 执行过程\n")

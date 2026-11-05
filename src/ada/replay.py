@@ -34,12 +34,26 @@ def render_html(trace: ExecutionTrace, diagnoses: list[Diagnosis],
     env_html = ""
     if profile:
         p = profile
-        env_html = f"""<h3>环境信息</h3>
-<table class="env">
-<tr><td>设备</td><td>{html.escape(p.brand)} {html.escape(p.model)}（{html.escape(p.serial)}）</td></tr>
-<tr><td>系统</td><td>Android {html.escape(p.android_release)} (SDK {p.sdk}) · ROM {html.escape(p.rom)}</td></tr>
-<tr><td>硬件</td><td>ABI {html.escape(p.abi)} · {html.escape(p.screen)}@{p.density}dpi · root {'是' if p.rooted else '否'} · 电量 {p.battery_level}%</td></tr>
-</table>"""
+        rows = [
+            ("设备", f"{p.brand} {p.model}（{p.serial}）"),
+            ("系统", f"Android {p.android_release} (SDK {p.sdk}) · ROM {p.rom} · 语言 {p.locale or '未知'}"),
+            ("构建指纹", p.build_fingerprint or "未知"),
+            ("增量版本", p.incremental or "未知"),
+            ("安全补丁", p.security_patch or "未知"),
+            ("内核", p.kernel or "未知"),
+            ("基带", p.baseband or "未知"),
+            ("CPU", f"{p.cpu_hardware or '未知'} · {p.cpu_cores} 核"),
+            ("GPU", p.gpu_renderer or "未知"),
+            ("内存", f"{p.ram_total_mb}MB 总 / {p.ram_avail_mb}MB 可用"),
+            ("存储", f"{p.storage_free_gb}GB 可用 / {p.storage_total_gb}GB 总"),
+            ("屏幕", f"{p.screen}@{p.density}dpi · {p.refresh_rate}Hz"),
+            ("电池", f"{p.battery_level}% · {p.battery_temp_c}℃ · {p.battery_voltage_mv}mV · {p.battery_status or '未知'}"),
+            ("root", "是" if p.rooted else "否"),
+        ]
+        trs = "".join(
+            f'<tr><td>{html.escape(k)}</td><td>{html.escape(str(v))}</td></tr>'
+            for k, v in rows)
+        env_html = f'<h3>环境信息</h3>\n<table class="env">{trs}</table>'
 
     # 按时间顺序逐步铺排
     step_html = ""
