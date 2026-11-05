@@ -183,8 +183,12 @@ def _rule_anr(lines: list[LogLine], idx: int) -> Diagnosis:
 class LogAnalyst:
     """三级漏斗：规则层（本类内置）→ LLM 层（可选注入）。指纹由 CrashDB 层处理。"""
 
-    def __init__(self, llm: Optional[OllamaClient] = None):
+    def __init__(self, llm: Optional[OllamaClient] = None,
+                 rules_path: Optional[str] = None):
         self.llm = llm
+        # 学习规则层：介于内置规则与 LLM 之间
+        from .rulemine import RuleMiner
+        self.miner = RuleMiner(rules_path) if rules_path else None
 
     def analyze(self, bundle: LogBundle, package: str = "",
                 use_llm: bool = True,
@@ -197,6 +201,17 @@ class LogAnalyst:
             if not crash:
                 continue
             diag = self._match(crash, package)
+            if diag.category == "unknown" and self.miner:
+                learned = self.miner.match(crash.exception)
+                if learned:
+                    diag = Diagnosis(
+                        category=learned["category"],
+                        root_cause=learned["root_cause"] + "（学习规则命中）",
+                        evidence=[crash.raw[:800]],
+                        confidence=0.65,
+                        fingerprint=fingerprint(crash, package),
+                        suggested_fix=learned["suggested_fix"],
+                    )
             if diag.category == "unknown" and use_llm and self.llm:
                 diag = self._llm_diagnose(crash, package, diag, context)
             out.append(diag)

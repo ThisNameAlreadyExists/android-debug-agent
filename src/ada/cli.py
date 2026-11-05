@@ -19,9 +19,12 @@ from .explore import Explorer
 from .llm import LLMError, OllamaClient
 from .logcapture import LogcatCapture, LogBundle, LogLine, FATAL_RE, ANR_RE
 from .minimize import minimize
+from .multidev import run_multi
+from .perf import PerfBaseline, collect_perf
 from .privacy import PrivacyGate
 from .replay import render_html
 from .reporter import render_markdown, write_report
+from .rulemine import RuleMiner
 from .scenario import ScenarioRunner, load_case
 from .verify import load_caselib, sink_case, verify_fix
 
@@ -128,6 +131,17 @@ def main() -> None:
     p.add_argument("--fingerprint", required=True)
     p.add_argument("--max-reruns", type=int, default=12)
 
+    p = sub.add_parser("mrun", help="多设备对照：同一用例并行跑多台设备并 diff")
+    p.add_argument("case")
+    p.add_argument("-s", "--serials", required=True, help="逗号分隔的多个设备号")
+    p.add_argument("-p", "--package", default="")
+
+    p = sub.add_parser("learn", help="把确认过的诊断沉淀为规则（规则自学习）")
+    p.add_argument("--exception", required=True, help="异常类名，如 java.util.concurrent.TimeoutException")
+    p.add_argument("--category", required=True)
+    p.add_argument("--cause", required=True)
+    p.add_argument("--fix", required=True)
+
     p = sub.add_parser("diagnose", help="离线诊断 logcat 文件")
     p.add_argument("logfile")
     p.add_argument("-p", "--package", default="")
@@ -166,7 +180,8 @@ def main() -> None:
         runner = ScenarioRunner(ch, workdir=Path(args.workdir), capture=cap)
         trace, bundle = runner.run(load_case(args.case), serial=args.serial,
                                    package=args.package)
-        analyst = LogAnalyst(llm=llm)
+        analyst = LogAnalyst(llm=llm,
+                             rules_path=str(Path(args.workdir) / "rules.json"))
         case_ctx = load_case(args.case).get("name", "")
         diagnoses = analyst.analyze(bundle, args.package, context=case_ctx) if bundle else []
         prof = None
@@ -190,6 +205,15 @@ def main() -> None:
             print(f"  [{d.category}|{src}] {d.root_cause} (指纹 {d.fingerprint}, 置信度 {d.confidence:.0%})")
         for n in notes:
             print(" ", n)
+        # 性能基线回归（顺带采集，有包名才做）
+        if args.package and args.serial and trace.passed:
+            pb = PerfBaseline(Path(args.workdir) / "perf.sqlite")
+            sample = collect_perf(ch, args.serial, args.package)
+            model = prof.model if prof else ""
+            for reg in pb.check(args.package, model, sample):
+                print(f"  ⚠️ {reg.text}")
+            pb.record(args.package, model, sample)
+            pb.close()
         print(f"报告: {rp}")
         print(f"回放: {hp}")
         sys.exit(0 if trace.passed else 2)
@@ -311,6 +335,33 @@ def main() -> None:
         with open(out, "w", encoding="utf-8") as f:
             _yaml.safe_dump(mini_case, f, allow_unicode=True, sort_keys=False)
         print(f"最小复现用例: {out}")
+        return
+
+    if args.cmd == "mrun":
+        case = load_case(args.case)
+        case.setdefault("package", args.package)
+        serials = [s.strip() for s in args.serials.split(",") if s.strip()]
+        if len(serials) < 2:
+            print("多设备对照需要至少 2 台设备（-s serial1,serial2）", file=sys.stderr)
+            sys.exit(1)
+        print(f"并行执行 {len(serials)} 台设备: {serials}")
+        devs, report = run_multi(case, serials, args.package, Path(args.workdir))
+        for d in devs:
+            mark = "✅" if d.passed else "❌"
+            err = f" 错误:{d.error}" if d.error else ""
+            print(f"  {mark} {d.serial}  指纹:{d.fingerprints or '无'}{err}")
+        print("\n对照结论：")
+        for n in report.notes:
+            print(f"  · {n}")
+        if report.device_specific_fingerprints:
+            print("  设备特异崩溃：", report.device_specific_fingerprints)
+        sys.exit(0 if not report.failed_serials else 2)
+
+    if args.cmd == "learn":
+        miner = RuleMiner(Path(args.workdir) / "rules.json")
+        miner.learn(args.exception, args.category, args.cause, args.fix)
+        print(f"规则已沉淀：{args.exception.split('.')[-1]} → [{args.category}] "
+              f"（后续同类崩溃将直接命中，不再调 LLM）")
         return
 
     if args.cmd == "diagnose":

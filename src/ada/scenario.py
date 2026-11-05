@@ -129,6 +129,9 @@ class ScenarioRunner:
             g = step["grant"]
             self.app.grant(g["package"], g["permission"], serial=serial)
             return f"grant {g['permission']}"
+        if "chaos" in step:
+            from .chaos import run_chaos
+            return "chaos: " + run_chaos(self.ch, serial, step["chaos"])
         if "assert_log" in step:
             if not self.capture:
                 raise RuntimeError("assert_log 需要启用日志捕获")
