@@ -1,0 +1,18 @@
+# 示例用例：冷启动 + 登录流程
+name: login_flow
+timeout: 120
+steps:
+  - clear_data: com.example.app
+  - grant: {package: com.example.app, permission: android.permission.CAMERA}
+  - launch: com.example.app
+  - wait: 3
+  - tap: {text: "登录"}
+  - wait: 1
+  - tap: {id: "com.example.app:id/et_username"}
+  - input: "testuser"
+  - tap: {id: "com.example.app:id/et_password"}
+  - input: "wrongpassword"
+  - tap: {text: "确定"}
+  - wait: 2
+  - assert_log: "Login failed"
+  - screenshot: true
