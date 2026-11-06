@@ -84,3 +84,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests   # 40 项
 - 二期：崩溃指纹库 CrashDB（指纹已产出）+ 时间轴回放 + 探索模式 + LLM 诊断层
 - 三期：修复验证闭环 + 用例自动沉淀 + 复现路径压缩 + 脱敏管道
 - 四期：多设备对照 + 诱发测试 + 规则自学习 + 性能基线
+
+## License
+
+[MIT](LICENSE)
